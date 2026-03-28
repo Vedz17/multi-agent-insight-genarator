@@ -5,6 +5,8 @@ import pdfplumber
 import io
 import os
 
+from vector_store import process_and_store_document
+
 load_dotenv()
 
 app = FastAPI(
@@ -25,32 +27,33 @@ app.add_middleware(
 async def root():
     return {"status": "Online", "message": "The AI Engine is Live! 🚀"}
 
-# --- NEW: PDF Upload & Parsing Endpoint ---
 @app.post("/upload-pdf/")
 async def upload_and_parse_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed Bhai!")
 
     try:
-        # Read the file directly into memory (No need to save it to hard drive)
         file_bytes = await file.read()
-        
         extracted_text = ""
         
-        # Open the PDF from memory using pdfplumber
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            # Loop through all pages and extract text smoothly
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     extracted_text += text + "\n"
         
-        # For now, we are just returning the first 500 characters to verify it worked
+        if not extracted_text.strip():
+            raise HTTPException(status_code=400, detail="PDF is empty or unreadable!")
+
+        # --- NEW: Send the text to the Vector DB ---
+        # Ye line text ko chunks mein todegi aur Pinecone mein save karegi
+        num_chunks = process_and_store_document(extracted_text, file.filename)
+        
         return {
             "filename": file.filename,
             "total_pages": len(pdf.pages),
-            "preview_text": extracted_text[:500] + "...\n[TEXT TRUNCATED FOR PREVIEW]",
-            "message": "PDF successfully parsed! Ready for Vector DB."
+            "chunks_created": num_chunks, # Kitne tukde hue wo return kar rahe hain
+            "message": "Success! PDF parsed and stored in Pinecone Vector DB! 🚀"
         }
         
     except Exception as e:
