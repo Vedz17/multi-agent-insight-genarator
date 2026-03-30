@@ -17,6 +17,7 @@ class GraphState(TypedDict):
     draft: str
     feedback: str
     iteration: int
+    domain: str
 
 pc=Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index =pc.Index("naac-report-index")
@@ -47,22 +48,23 @@ def researcher_agent(state:GraphState) -> GraphState:
     state["context"] = final_context
     return state    
 
-#WRITER AGENT: DRAFTING THE NAAC REPORT BASED ON THE CONTEXT AND QUESTION
+#WRITER AGENT: DRAFTING THE REPORT BASED ON THE CONTEXT AND QUESTION
 def writer_agent(state: GraphState) -> GraphState:
-    print("---✍️ WRITER AGENT: Drafting NAAC Report---")
+    print("---✍️ WRITER AGENT: Drafting  Report---")
     
     # 1. Read the Question and Context from the state
     question = state["question"]
     context = state["context"]
     
-    # 2. PROMPT ENGINEERING (The NAAC Rules)
-    system_prompt = f"""You are an expert NAAC Accreditation Report Writer for a prestigious college.
+    # 2. PROMPT ENGINEERING 
+    system_prompt = f"""You are an expert {state['domain']} Report Writer.
     Your job is to answer the user's query based ONLY on the provided context.
     
     STRICT RULES:
     1. Do not hallucinate or make up fake numbers. 
     2. If the answer is not in the context, clearly state: "The requested data is not available in the uploaded documents."
     3. Format the answer professionally using bullet points or clean paragraphs.
+    4.Act strictly as a professional {state['domain']} specialist.
     
     CONTEXT FETCHED FROM DATABASE:
     {context}
@@ -89,7 +91,7 @@ def reviewer_agent(state: GraphState) -> GraphState:
     draft = state["draft"]
     
     #  PROMPT ENGINEERING 
-    system_prompt = f"""You are a strict, senior NAAC Compliance Reviewer.
+    system_prompt = f"""You are a strict, senior {state['domain']} Reviewer.
     Your job is to evaluate the drafted report.
     
     USER QUESTION: {question}
@@ -123,12 +125,12 @@ workflow.add_node("writer", writer_agent)
 workflow.add_node("reviewer", reviewer_agent)
 
 #defining router
-def reviewe_router(state:GraphState):
+def review_router(state:GraphState):
     feedback=state["feedback"]
     if state["feedback"]=="PASS":
-        return END
+        return "end_process"
     else:
-        return "writer"
+        return "rewrite_draft"
     
 #adding edges to the graph
 workflow.set_entry_point("researcher")
@@ -148,7 +150,8 @@ if __name__ == "__main__":
         "context": "",
         "draft": "",
         "feedback": "",
-        "iteration": 0
+        "iteration": 0,
+        "domain": "NAAC Compliance"
     }
     
     # no manual function call , direct 'app' invoke the app
