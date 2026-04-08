@@ -1,9 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException , Form
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import pdfplumber
 import io
+from fastapi.responses import StreamingResponse
 
 # 1. Apne custom modules import kar rahe hain
 from vector_store import process_and_store_document # PDF save karne ke liye
@@ -31,7 +32,10 @@ app.add_middleware(
 # 🚪 DOOR 1: THE DATA UPLOAD PIPELINE
 # ==========================================
 @app.post("/upload-pdf/")
-async def upload_and_parse_pdf(file: UploadFile = File(...)):
+async def upload_and_parse_pdf(
+    workspaceId: str = Form(...), # 🚀 NAYA: Frontend se ID aayegi
+    file: UploadFile = File(...)
+):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed Bhai!")
 
@@ -39,6 +43,9 @@ async def upload_and_parse_pdf(file: UploadFile = File(...)):
         file_bytes = await file.read()
         extracted_text = ""
         
+        # ... tera pdfplumber wala extract text logic same rahega ...
+        import pdfplumber
+        import io
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
@@ -48,46 +55,76 @@ async def upload_and_parse_pdf(file: UploadFile = File(...)):
         if not extracted_text.strip():
             raise HTTPException(status_code=400, detail="PDF is empty or unreadable!")
 
-        # Text ko Pinecone vector DB mein save karo
-        num_chunks = process_and_store_document(extracted_text, file.filename)
+        # 🚀 NAYA: process_and_store ko 'workspace_id' pass kar diya
+        num_chunks = process_and_store_document(extracted_text, file.filename, workspaceId)
         
         return {
             "filename": file.filename,
             "total_pages": len(pdf.pages),
             "chunks_created": num_chunks,
-            "message": "Success! PDF parsed and stored in Pinecone Vector DB! 🚀"
+            "message": "Success! PDF parsed and stored in private namespace! 🚀"
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
 
 # ==========================================
-# 🚪 DOOR 2: THE AI CHAT PIPELINE (NEW)
+# 🚪 DOOR 2: THE AI CHAT PIPELINE (STREAMING)
 # ==========================================
 
-# Data type check karne ke liye schema
 class ChatRequest(BaseModel):
     question: str
     domain: str
+    chat_history: list = []
+    workspace_id: str
 
 @app.post("/chat")
 async def chat_with_ai(request: ChatRequest):
-    print(f"📩 Naya sawal aaya: {request.question}")
+    print(f" Naya sawal aaya: {request.question}")
+    print(f" Got old messages : {len(request.chat_history)}")
     
-    # Notebook banai aur LangGraph AI Engine ko de di
-    input_state = {
-        "question": request.question,
-        "context": "",
-        "draft": "",
-        "feedback": "",
-        "iteration": 0,
-        "domain": request.domain
-    }
-    
-    result = ai_app.invoke(input_state)
-    
-    # Final answer wapas frontend ko bhej diya
-    return {"answer": result["draft"]}
+    # 1. Ek Generator Function banayenge jo data ko tukdon mein dega
+    async def generate_response():
+        input_state = {
+            "question": request.question,
+            "context": "",
+            "draft": "",
+            "feedback": "",
+            "iteration": 0,
+            "domain": request.domain,
+            "workspace_id": request.workspace_id
+        }
+        
+        try:
+            # 2. LangGraph se token-by-token aur Events nikalna
+            async for event in ai_app.astream_events(input_state, version="v2"):
+                kind = event["event"]
+                name = event.get("name", "")
+
+                # 🚀 NINJA TRICK: Jaise hi koi Agent apna kaam shuru kare, UI ko signal bhejo
+                if kind == "on_chain_start":
+                    name_lower = name.lower()
+                    if "research" in name_lower:
+                        yield "[[STATUS:🔍 Researcher Agent is searching Pinecone...]]"
+                    elif "writer" in name_lower or "draft" in name_lower:
+                        yield "[[STATUS:✍️ Writer Agent is drafting the response...]]"
+                    elif "review" in name_lower:
+                        yield "[[STATUS:🕵️ Reviewer Agent is checking quality...]]"
+
+                # 3. Sirf wahi data pakdo jo AI actual mein type kar raha hai
+                elif kind == "on_chat_model_stream":
+                    # 🪡 LEAK FIX: Sirf tab stream karo jab ye 'writer' node se aa raha ho
+                    if event["metadata"].get("langgraph_node") == "writer":
+                        content = event["data"]["chunk"].content
+                        if content:
+                            yield content
+                        
+        except Exception as e:
+            print(f"Streaming Error: {e}")
+            yield f"\n\n[Error: {str(e)}]"
+
+    # 4. StreamingResponse in tukdon ko 'text/plain' format mein lagataar bhejta rahega
+    return StreamingResponse(generate_response(), media_type="text/plain")
 
 # ==========================================
 # 🩺 HEALTH CHECK
