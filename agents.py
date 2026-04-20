@@ -10,10 +10,11 @@ from langgraph.graph import StateGraph, END
 load_dotenv()
 
 # --- INITIALIZE LLM (GROQ) ---
+# --- INITIALIZE LLM (GROQ) ---
 llm = ChatGroq(
-    temperature=0, cd
+    temperature=0, 
     model_name="llama3-8b-8192", 
-    groq_api_key=os.getenv("GROQ_API_KEY")
+    groq_api_key=os.getenv("GROQ_API_KEY"),
     max_retries=1
 )
 
