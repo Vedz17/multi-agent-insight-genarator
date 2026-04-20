@@ -124,7 +124,16 @@ async def chat_with_ai(request: ChatRequest):
             yield f"\n\n[Error: {str(e)}]"
 
     # 4. StreamingResponse in tukdon ko 'text/plain' format mein lagataar bhejta rahega
-    return StreamingResponse(generate_response(), media_type="text/plain")
+    #  THE RENDER FIX: Nginx ko bypass karne ke liye headers
+    return StreamingResponse(
+        generate_response(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # manages ngnx loadbalancer
+        }
+    )
 
 # ==========================================
 # 🩺 HEALTH CHECK

@@ -11,9 +11,10 @@ load_dotenv()
 
 # --- INITIALIZE LLM (GROQ) ---
 llm = ChatGroq(
-    temperature=0, 
-    model_name="llama-3.3-70b-versatile", 
+    temperature=0, cd
+    model_name="llama3-8b-8192", 
     groq_api_key=os.getenv("GROQ_API_KEY")
+    max_retries=1
 )
 
 class GraphState(TypedDict):
@@ -88,7 +89,7 @@ def writer_agent(state: GraphState) -> GraphState:
     {question}
     """
     
-    time.sleep(1) 
+    
     response = llm.invoke(system_prompt)
     
     state["draft"] = response.content
@@ -114,7 +115,7 @@ def reviewer_agent(state: GraphState) -> GraphState:
     Otherwise, give specific feedback on what to fix.
     """
     
-    time.sleep(1)
+   
     response = llm.invoke(system_prompt)
     state["feedback"] = response.content.strip()
     return state
