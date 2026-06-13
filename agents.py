@@ -57,20 +57,43 @@ def researcher_agent(state: GraphState) -> GraphState:
     question = state["question"]
     query_vector = embeddings.embed_query(question)
     
+
     search_results = index.query(
         vector=query_vector, 
-        top_k=5, 
+        top_k=8, 
         include_metadata=True,
         namespace=state.get("workspace_id") 
     )
 
-    extracted_texts = [match["metadata"]["text"] for match in search_results["matches"] if "text" in match["metadata"]]
-    state["context"] = "\n\n---\n\n".join(extracted_texts) if extracted_texts else "No context found."
-    return state    
+    #Thresholding
+    
+    raw_matches = search_results.get("matches", [])
+    valid_chunks = [
+        m["metadata"]["text"] 
+        for m in raw_matches 
+        if m.get("score", 0) >= 0.70 and "text" in m["metadata"]
+    ]
+
+    
+    if not valid_chunks:
+        print("⚠️ WARNING: Data rejected by Threshold Filter (Score < 0.70).")
+        state["context"] = "NO_RELEVANT_DATA"
+        return state    
+
+    
+    state["context"] = "\n\n---\n\n".join(valid_chunks)
+    return state
 
 def writer_agent(state: GraphState) -> GraphState:
     """Synthesizes an analyst-style response."""
     print(f"---✍️ CHAT WRITER: Drafting Response---")
+
+    #edge case
+    if state["context"] == "NO_RELEVANT_DATA":
+        state["draft"] = "System Block: Based on the uploaded documents, I could not find relevant institutional data to answer this query. Please ensure valid compliance files are uploaded."
+        state["iteration"] = state.get("iteration", 0) + 1 
+        return state
+    
     question = state["question"]
     context = state["context"]
     
