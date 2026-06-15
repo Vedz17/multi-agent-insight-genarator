@@ -57,7 +57,6 @@ def researcher_agent(state: GraphState) -> GraphState:
     question = state["question"]
     query_vector = embeddings.embed_query(question)
     
-
     search_results = index.query(
         vector=query_vector, 
         top_k=8, 
@@ -65,22 +64,20 @@ def researcher_agent(state: GraphState) -> GraphState:
         namespace=state.get("workspace_id") 
     )
 
-    #Thresholding
-    
     raw_matches = search_results.get("matches", [])
+    
+    # 🚀 FIX: Lowered threshold from 0.70 to 0.50 to catch basic questions
     valid_chunks = [
         m["metadata"]["text"] 
         for m in raw_matches 
-        if m.get("score", 0) >= 0.70 and "text" in m["metadata"]
+        if m.get("score", 0) >= 0.50 and "text" in m["metadata"]
     ]
 
-    
     if not valid_chunks:
-        print("⚠️ WARNING: Data rejected by Threshold Filter (Score < 0.70).")
+        print("⚠️ WARNING: Data rejected by Threshold Filter (Score < 0.50).")
         state["context"] = "NO_RELEVANT_DATA"
         return state    
 
-    
     state["context"] = "\n\n---\n\n".join(valid_chunks)
     return state
 
@@ -88,7 +85,6 @@ def writer_agent(state: GraphState) -> GraphState:
     """Synthesizes an analyst-style response."""
     print(f"---✍️ CHAT WRITER: Drafting Response---")
 
-    #edge case
     if state["context"] == "NO_RELEVANT_DATA":
         state["draft"] = "System Block: Based on the uploaded documents, I could not find relevant institutional data to answer this query. Please ensure valid compliance files are uploaded."
         state["iteration"] = state.get("iteration", 0) + 1 
@@ -100,15 +96,15 @@ def writer_agent(state: GraphState) -> GraphState:
     chat_history_list = state.get("chat_history", [])
     history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in chat_history_list])
     
-    # Updated Persona: Insight Analyst (Fast & Grounded)
+    # 🚀 FIX: Hyper-strict prompt to completely kill hallucinations in Chat
     system_prompt = f"""You are the InsightGen Intelligent Analyst. 
     Provide clear, structured insights based ONLY on the provided institutional documents.
 
-    RULES:
-    1. STRICT GROUNDING: Use ONLY the context below. 
-    2. If info is missing, say: "I don't find this specific data in the documents."
-    3. Use clean Markdown/bullets.
-    4. Maintain a professional analyst tone.
+    STRICT ANTI-HALLUCINATION RULES:
+    1. STRICT GROUNDING: Use ONLY the context below. Do not use your pre-trained knowledge.
+    2. If the context has absolutely nothing to do with the user's query, reply EXACTLY with: "I cannot find specific data regarding this in the uploaded documents."
+    3. DO NOT force connections. Do not guess the institution's name unless explicitly written in the context.
+    4. Use clean Markdown/bullets and maintain a professional tone.
 
     DOCUMENTS CONTEXT:
     {context}
@@ -127,9 +123,14 @@ def writer_agent(state: GraphState) -> GraphState:
 def reviewer_agent(state: GraphState) -> GraphState:
     """Quick check for hallucinations or missing info."""
     print("---🕵️ CHAT REVIEWER: Validating Accuracy---")
-    system_prompt = f"""Review this response. 
-    Does it accurately answer '{state['question']}' using only the provided context?
-    Reply 'PASS' if it's accurate, or provide feedback if it's hallucinating.
+    
+    # 🚀 FIX: Made the reviewer stricter as well
+    system_prompt = f"""Review this response as a strict compliance auditor.
+    Does it accurately answer '{state['question']}' using ONLY the provided context?
+    Does it hallucinate any names, places, or metrics?
+    
+    Reply 'PASS' if it is 100% accurate and grounded, or provide critical feedback if it's hallucinating.
+    
     DRAFT: {state['draft']}"""
     
     response = llm.invoke(system_prompt)
@@ -182,7 +183,6 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
         print(f"🔍 AI Researcher: Deep scanning for {section}...")
         query_vector = embeddings.embed_query(section)
         
-        # Pulling more data (top_k=6) for report depth
         search_results = index.query(
             vector=query_vector, 
             top_k=6, 
@@ -190,21 +190,26 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
             namespace=state["workspace_id"]
         )
         
-        section_context = "\n".join([m["metadata"]["text"] for m in search_results["matches"] if "text" in m["metadata"]])
+        # 🚀 FIX: Added thresholding to Reports to reject random data
+        valid_chunks = [m["metadata"]["text"] for m in search_results["matches"] if m.get("score", 0) >= 0.50 and "text" in m["metadata"]]
+        section_context = "\n".join(valid_chunks)
         
         if not section_context.strip():
-            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric.*\n\n"
+            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric in the uploaded files.*\n\n"
             continue
 
-        prompt = f"""Write a formal NAAC accreditation report section for: {section}.
-        CONTEXT FROM DOCUMENTS:
+        # 🚀 FIX: Brutal anti-hallucination prompt for report sections
+        prompt = f"""Write a formal NAAC accreditation report section for: '{section}'.
+        
+        CONTEXT FROM UPLOADED DOCUMENTS:
         {section_context}
         
-        RULES:
-        - Use a highly formal, academic tone.
-        - Use structured bullet points.
-        - Ground every claim in the provided context.
-        - Use Markdown headers for sub-points.
+        STRICT ANTI-HALLUCINATION RULES:
+        1. You are a strict auditor. If the CONTEXT does NOT explicitly contain information relevant to the exact topic '{section}', DO NOT write a fake report.
+        2. If data is irrelevant or missing, reply EXACTLY with: "Insufficient institutional data found for {section}."
+        3. DO NOT force fit data (e.g., do not talk about Industrial Visits if the section is about the Library).
+        4. Ground every single claim strictly in the context. Do not make generic positive statements unless proven by the context.
+        5. Use a highly formal, academic tone with Markdown headers and bullet points.
         """
         response = llm.invoke(prompt)
         final_combined_report += response.content + "\n\n---\n\n"
