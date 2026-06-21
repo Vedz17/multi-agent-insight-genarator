@@ -86,7 +86,7 @@ def researcher_agent(state: GraphState) -> GraphState:
             top_n=5 # Only keep the absolute best 5 chunks
         )
         
-        # 3. STRICT CUT-OFF: Drop anything that scores below 0.60
+        # 3. STRICT CUT-OFF: Drop anything that scores below 0.20
         valid_chunks = [
             raw_chunks[res.index] 
             for res in rerank_results.results 
@@ -97,7 +97,7 @@ def researcher_agent(state: GraphState) -> GraphState:
         valid_chunks = raw_chunks[:5] # Fallback if API fails
 
     if not valid_chunks:
-        print("⚠️ WARNING: Cohere rejected all chunks (Score < 0.60). Probably Junk Data.")
+        print("⚠️ WARNING: Cohere rejected all chunks (Score < 0.20). Probably Junk Data.")
         state["context"] = "NO_RELEVANT_DATA"
         return state
 
@@ -204,56 +204,33 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
         print(f"🔍 AI Researcher: Deep scanning for {section}...")
         query_vector = embeddings.embed_query(section)
         
-        # 1. Broad Pinecone Search
+        # 1. Broad Pinecone Search (🚀 FIX: No Cohere Reranker here to maximize recall!)
         search_results = index.query(
             vector=query_vector, 
-            top_k=15, 
+            top_k=10, 
             include_metadata=True, 
             namespace=state["workspace_id"]
         )
         
-        raw_chunks = [m["metadata"]["text"] for m in search_results["matches"] if "text" in m["metadata"]]
-        
-        if not raw_chunks:
-            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric.*\n\n"
-            continue
-
-        print(f"🧠 COHERE: Reranking chunks for '{section}'...")
-        try:
-            # 2. Rerank the chunks
-            rerank_results = cohere_client.rerank(
-                model="rerank-english-v3.0",
-                query=section,
-                documents=raw_chunks,
-                top_n=5
-            )
-            # 3. Strict Threshold
-            valid_chunks = [
-                raw_chunks[res.index] 
-                for res in rerank_results.results 
-                if res.relevance_score >= 0.20
-            ]
-        except Exception as e:
-            print(f"🚨 Cohere API Error: {e}")
-            valid_chunks = raw_chunks[:5]
-
+        # Mild Pinecone threshold to remove absolute garbage
+        valid_chunks = [m["metadata"]["text"] for m in search_results["matches"] if m.get("score", 0) >= 0.40 and "text" in m["metadata"]]
         section_context = "\n".join(valid_chunks)
         
         if not section_context.strip():
-            final_combined_report += f"## {section}\n*Error: The uploaded document does not contain valid academic or institutional data for this section.*\n\n"
+            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric.*\n\n"
             continue
 
-        prompt = f"""Write a formal NAAC accreditation report section for: '{section}'.
+        # 🚀 FIX: The "Softened but Strict" Prompt
+        prompt = f"""You are an expert NAAC Accreditation Auditor. Write a highly formal report section for: '{section}'.
         
-        CONTEXT FROM UPLOADED DOCUMENTS:
+        EXTRACTED DATA:
         {section_context}
         
-        STRICT ANTI-HALLUCINATION RULES:
-        1. You are a strict auditor. If the CONTEXT does NOT explicitly contain information relevant to the exact topic '{section}', DO NOT write a fake report.
-        2. If data is irrelevant or missing, reply EXACTLY with: "Insufficient institutional data found for {section}."
-        3. DO NOT force fit data.
-        4. Ground every single claim strictly in the context. Do not make generic positive statements unless proven by the context.
-        5. Use a highly formal, academic tone with Markdown headers and bullet points.
+        INSTRUCTIONS:
+        1. Carefully read the extracted data. It may lack punctuation, so read the context closely.
+        2. Find all relevant statistics, processes, and facts related to '{section}' (e.g., if section is Academic Flexibility, look for new courses, CBCS system, add-on programs).
+        3. Write a structured, professional report using ONLY the valid facts found in the data.
+        4. If and ONLY if there is absolutely zero mention of anything related to '{section}', then reply with: "Error: The uploaded document does not contain valid academic or institutional data for this section."
         """
         response = llm.invoke(prompt)
         final_combined_report += response.content + "\n\n---\n\n"
