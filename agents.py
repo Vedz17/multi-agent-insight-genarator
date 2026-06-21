@@ -90,7 +90,7 @@ def researcher_agent(state: GraphState) -> GraphState:
         valid_chunks = [
             raw_chunks[res.index] 
             for res in rerank_results.results 
-            if res.relevance_score >= 0.20
+            if res.relevance_score >= 0.05
         ]
     except Exception as e:
         print(f"🚨 Cohere API Error: {e}")
