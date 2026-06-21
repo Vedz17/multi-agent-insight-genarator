@@ -6,6 +6,7 @@ from pinecone import Pinecone
 from langchain_groq import ChatGroq
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langgraph.graph import StateGraph, END
+import cohere # 🚀 FIX: Imported Cohere for deep semantic reranking
 
 load_dotenv()
 
@@ -25,6 +26,9 @@ llm = ChatGroq(
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index = pc.Index("naac-report-index")
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+# --- COHERE RERANKER ---
+cohere_client = cohere.Client(api_key=os.getenv("COHERE_API_KEY"))
 
 # --- NAAC CRITERIA MAPPING ---
 NAAC_CRITERIA_MAP = {
@@ -52,31 +56,50 @@ class GraphState(TypedDict):
     workspace_id: str
 
 def researcher_agent(state: GraphState) -> GraphState:
-    """Fetches relevant chunks from Pinecone using workspace namespace."""
+    """Fetches chunks from Pinecone and Re-ranks them using Cohere."""
     print(f"---🔍 CHAT RESEARCHER: Searching [Namespace: {state.get('workspace_id')}]---")  
     question = state["question"]
     query_vector = embeddings.embed_query(question)
     
+    # 1. PULL A WIDE NET FROM PINECONE (Top 20)
     search_results = index.query(
         vector=query_vector, 
-        top_k=8, 
+        top_k=20, 
         include_metadata=True,
         namespace=state.get("workspace_id") 
     )
 
     raw_matches = search_results.get("matches", [])
-    
-    # 🚀 FIX: Lowered threshold from 0.70 to 0.50 to catch basic questions
-    valid_chunks = [
-        m["metadata"]["text"] 
-        for m in raw_matches 
-        if m.get("score", 0) >= 0.50 and "text" in m["metadata"]
-    ]
+    raw_chunks = [m["metadata"]["text"] for m in raw_matches if "text" in m["metadata"]]
 
-    if not valid_chunks:
-        print("⚠️ WARNING: Data rejected by Threshold Filter (Score < 0.50).")
+    if not raw_chunks:
         state["context"] = "NO_RELEVANT_DATA"
         return state    
+
+    print("🧠 CHAT RESEARCHER: Reranking with Cohere...")
+    try:
+        # 2. THE COHERE MAGIC: Score and sort chunks based on actual relevance
+        rerank_results = cohere_client.rerank(
+            model="rerank-english-v3.0",
+            query=question,
+            documents=raw_chunks,
+            top_n=5 # Only keep the absolute best 5 chunks
+        )
+        
+        # 3. STRICT CUT-OFF: Drop anything that scores below 0.60
+        valid_chunks = [
+            raw_chunks[res.index] 
+            for res in rerank_results.results 
+            if res.relevance_score >= 0.60
+        ]
+    except Exception as e:
+        print(f"🚨 Cohere API Error: {e}")
+        valid_chunks = raw_chunks[:5] # Fallback if API fails
+
+    if not valid_chunks:
+        print("⚠️ WARNING: Cohere rejected all chunks (Score < 0.60). Probably Junk Data.")
+        state["context"] = "NO_RELEVANT_DATA"
+        return state
 
     state["context"] = "\n\n---\n\n".join(valid_chunks)
     return state
@@ -96,7 +119,6 @@ def writer_agent(state: GraphState) -> GraphState:
     chat_history_list = state.get("chat_history", [])
     history_text = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in chat_history_list])
     
-    # 🚀 FIX: Hyper-strict prompt to completely kill hallucinations in Chat
     system_prompt = f"""You are the InsightGen Intelligent Analyst. 
     Provide clear, structured insights based ONLY on the provided institutional documents.
 
@@ -124,7 +146,6 @@ def reviewer_agent(state: GraphState) -> GraphState:
     """Quick check for hallucinations or missing info."""
     print("---🕵️ CHAT REVIEWER: Validating Accuracy---")
     
-    # 🚀 FIX: Made the reviewer stricter as well
     system_prompt = f"""Review this response as a strict compliance auditor.
     Does it accurately answer '{state['question']}' using ONLY the provided context?
     Does it hallucinate any names, places, or metrics?
@@ -183,22 +204,45 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
         print(f"🔍 AI Researcher: Deep scanning for {section}...")
         query_vector = embeddings.embed_query(section)
         
+        # 1. Broad Pinecone Search
         search_results = index.query(
             vector=query_vector, 
-            top_k=6, 
+            top_k=15, 
             include_metadata=True, 
             namespace=state["workspace_id"]
         )
         
-        # 🚀 FIX: Added thresholding to Reports to reject random data
-        valid_chunks = [m["metadata"]["text"] for m in search_results["matches"] if m.get("score", 0) >= 0.50 and "text" in m["metadata"]]
+        raw_chunks = [m["metadata"]["text"] for m in search_results["matches"] if "text" in m["metadata"]]
+        
+        if not raw_chunks:
+            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric.*\n\n"
+            continue
+
+        print(f"🧠 COHERE: Reranking chunks for '{section}'...")
+        try:
+            # 2. Rerank the chunks
+            rerank_results = cohere_client.rerank(
+                model="rerank-english-v3.0",
+                query=section,
+                documents=raw_chunks,
+                top_n=5
+            )
+            # 3. Strict Threshold
+            valid_chunks = [
+                raw_chunks[res.index] 
+                for res in rerank_results.results 
+                if res.relevance_score >= 0.55
+            ]
+        except Exception as e:
+            print(f"🚨 Cohere API Error: {e}")
+            valid_chunks = raw_chunks[:5]
+
         section_context = "\n".join(valid_chunks)
         
         if not section_context.strip():
-            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric in the uploaded files.*\n\n"
+            final_combined_report += f"## {section}\n*Error: The uploaded document does not contain valid academic or institutional data for this section.*\n\n"
             continue
 
-        # 🚀 FIX: Brutal anti-hallucination prompt for report sections
         prompt = f"""Write a formal NAAC accreditation report section for: '{section}'.
         
         CONTEXT FROM UPLOADED DOCUMENTS:
@@ -207,7 +251,7 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
         STRICT ANTI-HALLUCINATION RULES:
         1. You are a strict auditor. If the CONTEXT does NOT explicitly contain information relevant to the exact topic '{section}', DO NOT write a fake report.
         2. If data is irrelevant or missing, reply EXACTLY with: "Insufficient institutional data found for {section}."
-        3. DO NOT force fit data (e.g., do not talk about Industrial Visits if the section is about the Library).
+        3. DO NOT force fit data.
         4. Ground every single claim strictly in the context. Do not make generic positive statements unless proven by the context.
         5. Use a highly formal, academic tone with Markdown headers and bullet points.
         """
@@ -223,7 +267,6 @@ report_workflow.add_node("compiler", report_compiler_loop)
 report_workflow.set_entry_point("compiler")
 report_workflow.add_edge("compiler", END)
 report_app = report_workflow.compile()
-
 
 # =====================================================================
 # ✨ PART 3: UTILITY FUNCTIONS (Refiners)
