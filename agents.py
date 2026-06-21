@@ -191,9 +191,7 @@ class ReportGraphState(TypedDict):
     final_report: str
 
 def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
-    """Iterates through NAAC sub-sections to build a full report."""
     print(f"---📝 SECTION COMPILER: Criterion {state['criterion_id']}---")
-    
     full_topics = state['criterion_topics'].split(':')
     criterion_name = full_topics[0]
     sub_sections = [s.strip() for s in full_topics[1].split(',')]
@@ -201,36 +199,38 @@ def report_compiler_loop(state: ReportGraphState) -> ReportGraphState:
     final_combined_report = f"# {criterion_name}\n\n"
 
     for section in sub_sections:
-        print(f"🔍 AI Researcher: Deep scanning for {section}...")
         query_vector = embeddings.embed_query(section)
         
-        # 1. Broad Pinecone Search (🚀 FIX: No Cohere Reranker here to maximize recall!)
+        # 1. Search (Broad search)
         search_results = index.query(
             vector=query_vector, 
-            top_k=10, 
+            top_k=8, 
             include_metadata=True, 
             namespace=state["workspace_id"]
         )
         
-        # Mild Pinecone threshold to remove absolute garbage
-        valid_chunks = [m["metadata"]["text"] for m in search_results["matches"] if m.get("score", 0) >= 0.40 and "text" in m["metadata"]]
-        section_context = "\n".join(valid_chunks)
+        # 2. Extract Chunks
+        raw_chunks = [m["metadata"]["text"] for m in search_results["matches"] if "text" in m["metadata"]]
         
-        if not section_context.strip():
-            final_combined_report += f"## {section}\n*Insufficient institutional data found for this specific metric.*\n\n"
+        # 3. 🛡️ GATEKEEPER: LLM Filter (Ask LLM if context is even relevant)
+        # Humein LLM ko batana hoga ki gaane ya faltu cheezein ignore karein
+        context_check_prompt = f"""You are a data filter. Analyze this context and decide if it contains valid academic/institutional data for '{section}'.
+        
+        CONTEXT: {' '.join(raw_chunks[:3])} 
+        
+        REPLY ONLY 'YES' if it contains academic data, or 'NO' if it is lyrics, recipes, or irrelevant noise.
+        """
+        is_relevant = llm.invoke(context_check_prompt).content.strip()
+        
+        if "NO" in is_relevant.upper():
+            final_combined_report += f"## {section}\n*Insufficient institutional data found.*\n\n"
             continue
 
-        # 🚀 FIX: The "Softened but Strict" Prompt
-        prompt = f"""You are an expert NAAC Accreditation Auditor. Write a highly formal report section for: '{section}'.
+        # 4. If YES, then write report
+        prompt = f"""Write a formal NAAC report section for: '{section}'.
+        Use ONLY this valid academic context: {' '.join(raw_chunks)}
         
-        EXTRACTED DATA:
-        {section_context}
-        
-        INSTRUCTIONS:
-        1. Carefully read the extracted data. It may lack punctuation, so read the context closely.
-        2. Find all relevant statistics, processes, and facts related to '{section}' (e.g., if section is Academic Flexibility, look for new courses, CBCS system, add-on programs).
-        3. Write a structured, professional report using ONLY the valid facts found in the data.
-        4. If and ONLY if there is absolutely zero mention of anything related to '{section}', then reply with: "Error: The uploaded document does not contain valid academic or institutional data for this section."
+        IF the context contains irrelevant lyrics or non-academic text, IGNORE IT COMPLETELY.
         """
         response = llm.invoke(prompt)
         final_combined_report += response.content + "\n\n---\n\n"
