@@ -26,36 +26,30 @@ This repository houses the core AI Engine for InsightGen. It is a highly optimiz
 ## 🚀 Step-by-Step Setup
 
 **1. Clone the repository**
-\`\`\`bash
-git clone https://github.com/your-username/insightgen-ai-engine.git
-cd insightgen-ai-engine
-\`\`\`
+```bash
+git clone [https://github.com/Vedz17/multi-agent-insight-generator.git](https://github.com/Vedz17/multi-agent-insight-generator.git)
+cd multi-agent-insight-generator
+2. Create a Virtual Environment
 
-**2. Create a Virtual Environment**
-\`\`\`bash
+Bash
 python -m venv venv
 source venv/bin/activate  # On Windows use: venv\Scripts\activate
-\`\`\`
+3. Install Dependencies
 
-**3. Install Dependencies**
-\`\`\`bash
+Bash
 pip install -r requirements.txt
-\`\`\`
+4. Set up Environment Variables
+Create a .env file in the root directory:
 
-**4. Set up Environment Variables**
-Create a \`.env\` file in the root directory:
-\`\`\`env
+Code snippet
 GROQ_API_KEY=your_groq_api_key
 GOOGLE_API_KEY=your_google_ai_studio_key
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_INDEX_NAME=naac-report-index
-\`\`\`
+5. Run the AI Server
 
-**5. Run the AI Server**
-\`\`\`bash
+Bash
 uvicorn main:app --reload --port 8000
-\`\`\`
-The AI Engine will now be streaming data at \`http://localhost:8000\`.
+The AI Engine will now be streaming data at http://localhost:8000.
 
----
-*Architected with 🩵 by [Vedant Bhamare] - AI Enthusiast & Full Stack Developer*
+Architected with 🩵 by Vedant Bhamare - AI Enthusiast & Full Stack Developer
