@@ -26,17 +26,17 @@ This repository houses the core AI Engine for InsightGen. It is a highly optimiz
 ## 🚀 Step-by-Step Setup
 
 **1. Clone the repository**
-```bash
+
 git clone [https://github.com/Vedz17/multi-agent-insight-generator.git](https://github.com/Vedz17/multi-agent-insight-generator.git)
 cd multi-agent-insight-generator
 2. Create a Virtual Environment
 
-Bash
+
 python -m venv venv
 source venv/bin/activate  # On Windows use: venv\Scripts\activate
 3. Install Dependencies
 
-Bash
+
 pip install -r requirements.txt
 4. Set up Environment Variables
 Create a .env file in the root directory:
@@ -48,7 +48,7 @@ PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_INDEX_NAME=naac-report-index
 5. Run the AI Server
 
-Bash
+
 uvicorn main:app --reload --port 8000
 The AI Engine will now be streaming data at http://localhost:8000.
 
