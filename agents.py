@@ -19,7 +19,8 @@ llm = ChatGroq(
     temperature=0,
     model_name="openai/gpt-oss-20b",
     groq_api_key=os.getenv("GROQ_API_KEY"),
-    max_retries=1
+    max_retries=1,
+    max_tokens=800
 )
 
 # --- PINECONE & EMBEDDINGS ---
@@ -72,10 +73,10 @@ def researcher_agent(state: GraphState) -> GraphState:
     question = state["question"]
     query_vector = embeddings.embed_query(question)
 
-    # 1. PULL A WIDE NET FROM PINECONE (Top 20)
+    # 1. PULL A WIDE NET FROM PINECONE (Top 5)
     search_results = index.query(
         vector=query_vector,
-        top_k=20,
+        top_k=5,
         include_metadata=True,
         namespace=state.get("workspace_id")
     )
@@ -279,7 +280,7 @@ def report_retriever_agent(
     # 2. Broad semantic retrieval from the correct workspace
     search_results = index.query(
         vector=query_vector,
-        top_k=20,
+        top_k=6,
         include_metadata=True,
         namespace=workspace_id
     )
@@ -327,7 +328,7 @@ def report_retriever_agent(
 
     except Exception as e:
         print(
-            f"🚨 REPORT RETRIEVER: "
+            f" REPORT RETRIEVER: "
             f"Cohere error: {e}"
         )
 
@@ -352,7 +353,7 @@ def report_retriever_agent(
     state["context"] = "\n\n---\n\n".join(valid_chunks)
 
     print(
-        f"✅ REPORT RETRIEVER: Selected "
+        f" REPORT RETRIEVER: Selected "
         f"{len(valid_chunks)} evidence chunks."
     )
 
@@ -378,7 +379,7 @@ def report_writer_agent(
     iteration = state.get("iteration", 0)
 
     print(
-        f"---✍️ REPORT WRITER: Drafting '{section_name}' "
+        f"--- REPORT WRITER: Drafting '{section_name}' "
         f"[Attempt: {iteration + 1}]---"
     )
 
