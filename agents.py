@@ -17,7 +17,7 @@ load_dotenv()
 # --- LLM SETUP (GROQ) ---
 llm = ChatGroq(
     temperature=0,
-    model_name="llama3-8b-8192",
+    model_name="mixtral-8x7b-32768",
     groq_api_key=os.getenv("GROQ_API_KEY"),
     max_retries=1,
     max_tokens=800
