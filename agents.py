@@ -17,7 +17,7 @@ load_dotenv()
 # --- LLM SETUP (GROQ) ---
 llm = ChatGroq(
     temperature=0,
-    model_name="openai/gpt-oss-20b",
+    model_name="llama3-8b-8192",
     groq_api_key=os.getenv("GROQ_API_KEY"),
     max_retries=1,
     max_tokens=800
@@ -194,6 +194,9 @@ Does it hallucinate any names, places, or metrics?
 
 Reply 'PASS' if it is 100% accurate and grounded,
 or provide critical feedback if it is hallucinating.
+
+ORIGINAL CONTEXT RETRIEVED FROM DATABASE:
+{state['context']}
 
 DRAFT:
 {state['draft']}
@@ -422,6 +425,7 @@ GROUNDING RULES:
 8. Do NOT turn a possible implication into a confirmed institutional fact.
 9. Do NOT exaggerate the impact or benefit of an activity unless the evidence supports that impact.
 10. Ignore clearly irrelevant or non-academic text.
+11. NOTE: The input data might be highly unstructured without punctuation. Synthesize it into a professional narrative regardless.
 
 WRITING RULES:
 1. Start the response with exactly: ## {section_name}
@@ -463,6 +467,7 @@ GROUNDING RULES:
 8. Do NOT convert implications or assumptions into confirmed institutional facts.
 9. Do NOT exaggerate institutional outcomes or benefits beyond the evidence.
 10. Keep valid and grounded parts of the previous draft wherever possible.
+11. NOTE: The input data might be unstructured. Synthesize it into a professional narrative.
 
 WRITING RULES:
 1. Start the response with exactly: ## {section_name}
@@ -484,7 +489,18 @@ Write the complete corrected NAAC report section now."""
 
     response = llm.invoke(prompt)
 
-    state["draft"] = response.content
+    # 🚀 THE SAFETY NET FIX: Prevents "Empty Content" crashes on frontend
+    generated_text = response.content.strip()
+
+    if not generated_text:
+        print(f"⚠️ WRITER CHOKED! Returned empty string for '{section_name}'.")
+        if iteration == 0:
+            state["draft"] = f"## {section_name}\n*AI encountered an internal formatting error due to unstructured text. Please try again.*"
+        else:
+            print("Restoring previous valid draft...")
+            # state["draft"] remains exactly what it was in the previous iteration
+    else:
+        state["draft"] = generated_text
 
     # iteration represents the number of Writer attempts
     state["iteration"] = iteration + 1
