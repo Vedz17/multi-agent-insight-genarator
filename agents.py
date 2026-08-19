@@ -17,7 +17,7 @@ load_dotenv()
 # --- LLM SETUP (GROQ) ---
 llm = ChatGroq(
     temperature=0,
-    model_name="llama-3.3-70b-versatile",
+    model_name="openai/gpt-oss-20b",
     groq_api_key=os.getenv("GROQ_API_KEY"),
     max_retries=1,
     max_tokens=800
